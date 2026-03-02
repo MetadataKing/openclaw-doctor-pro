@@ -1,0 +1,17 @@
+{
+  "name": "openclaw-doctor-pro",
+  "version": "1.0.0",
+  "description": "Deep diagnostic tool for OpenClaw installations",
+  "main": "src/index.js",
+  "bin": {
+    "openclaw-doctor": "./src/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node src/index.js --json"
+  },
+  "keywords": ["openclaw", "diagnostics", "ollama", "telegram", "ai-agent", "gpu"],
+  "author": "André Luiz",
+  "license": "MIT"
+}

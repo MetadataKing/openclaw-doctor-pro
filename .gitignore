@@ -1,0 +1,4 @@
+node_modules/
+doctor-report.html
+.env
+*.log
