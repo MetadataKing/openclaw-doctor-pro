@@ -1,28 +1,46 @@
 # 🦞 OpenClaw Doctor Pro
 
-**Deep diagnostic tool for OpenClaw installations.**
-Catches the config mistakes that cost you 12 hours.
+Deep diagnostic tool for OpenClaw installations. Catches the config mistakes that cost you 12 hours — **then fixes them automatically**.
 
 ## Install
 
-```bash
+```
 npm install -g openclaw-doctor-pro
 ```
 
 Or run without installing:
 
-```bash
+```
 npx openclaw-doctor-pro
 ```
 
 ## Usage
 
-```bash
-openclaw-doctor              # Run all checks
+```
+openclaw-doctor              # Diagnose all issues
+openclaw-doctor --fix        # ⚡ Auto-repair everything
 openclaw-doctor --json       # JSON output
 openclaw-doctor --html       # Generate HTML report
 openclaw-doctor --publish    # Generate + publish to here.now
 ```
+
+## What `--fix` Does
+
+| Issue | Auto-Fix Action |
+|-------|----------------|
+| baseUrl ends with `/v1` | Strips the suffix from config |
+| `0.0.0.0` in provider URL | Replaces with `127.0.0.1` |
+| No primary model set | Sets `ollama/qwen2.5:7b` |
+| Empty tools deny list | Adds default deny list |
+| Telegram DM policy open | Sets to `pairing` |
+| Weak gateway token | Generates strong random token |
+| Duplicate gateway PIDs | Kills extra processes |
+| Telegram webhook active | Deletes webhook |
+| `OLLAMA_GPU_OVERHEAD` set | Removes from User + Machine env |
+| Models on CPU | Restarts Ollama service |
+| No models loaded | Loads primary model with keepalive |
+
+Every fix creates a **timestamped backup** of your config first.
 
 ## What It Checks
 
