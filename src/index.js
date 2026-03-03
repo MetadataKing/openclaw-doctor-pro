@@ -1,11 +1,11 @@
 ﻿#!/usr/bin/env node
 
 /**
- * OpenClaw Doctor Pro v2.0.0 — Diagnose AND Fix
- * Catches the config mistakes that cost you 12 hours. Then fixes them.
+ * OpenClaw Doctor Pro v2.1.0 — Diagnose AND Fix
+ * Free: Full diagnostics. Pro (--fix): Auto-repair with license key.
  */
 
-import { readFile, writeFile, copyFile } from 'fs/promises';
+import { readFile, writeFile, copyFile, mkdir } from 'fs/promises';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -26,13 +26,20 @@ const WARN = c.yellow('⚠ WARN');
 const INFO = c.cyan('ℹ INFO');
 const FIXED = c.magenta('🔧 FIX');
 
-const FIX_MODE = process.argv.includes('--fix');
 const args = process.argv.slice(2);
+const FIX_MODE = args.includes('--fix');
+const ACTIVATE = args.includes('--activate');
+const DEACTIVATE = args.includes('--deactivate');
+
+const LICENSE_DIR = join(homedir(), '.openclaw-doctor-pro');
+const LICENSE_FILE = join(LICENSE_DIR, 'license.key');
+const CONFIG_PATH = join(homedir(), '.openclaw', 'openclaw.json');
+const GUMROAD_PRODUCT = 'openclaw-doctor-pro';
+const BUY_URL = 'https://metadataking.gumroad.com/l/openclaw-doctor-pro';
 
 function run(cmd) {
-  try {
-    return execSync(cmd, { encoding: 'utf8', timeout: 15000 }).trim();
-  } catch { return null; }
+  try { return execSync(cmd, { encoding: 'utf8', timeout: 15000 }).trim(); }
+  catch { return null; }
 }
 
 async function readJson(path) {
@@ -44,7 +51,102 @@ async function writeJson(path, data) {
   await writeFile(path, JSON.stringify(data, null, 2));
 }
 
-const CONFIG_PATH = join(homedir(), '.openclaw', 'openclaw.json');
+// ─── License Management ──────────────────────────────────
+async function loadLicense() {
+  try {
+    const key = (await readFile(LICENSE_FILE, 'utf8')).trim();
+    return key || null;
+  } catch { return null; }
+}
+
+async function saveLicense(key) {
+  await mkdir(LICENSE_DIR, { recursive: true });
+  await writeFile(LICENSE_FILE, key.trim());
+}
+
+async function removeLicense() {
+  try { const { unlink } = await import('fs/promises'); await unlink(LICENSE_FILE); return true; }
+  catch { return false; }
+}
+
+function verifyLicenseOnline(key) {
+  const res = run(`curl -s -X POST "https://api.gumroad.com/v2/licenses/verify" -d "product_id=${GUMROAD_PRODUCT}&license_key=${key}"`);
+  if (!res) return { valid: false, reason: 'offline' };
+  try {
+    const data = JSON.parse(res);
+    if (data.success === true) return { valid: true, email: data.purchase?.email || 'unknown' };
+    return { valid: false, reason: data.message || 'invalid key' };
+  } catch { return { valid: false, reason: 'parse error' }; }
+}
+
+function verifyLicenseOffline(key) {
+  // Format: XXXX-XXXX-XXXX-XXXX (16 chars + dashes, alphanumeric)
+  if (!key) return false;
+  const clean = key.replace(/-/g, '');
+  return /^[A-Fa-f0-9]{16,40}$/.test(clean) && clean.length >= 16;
+}
+
+async function handleActivate() {
+  const keyIndex = args.indexOf('--activate');
+  const key = args[keyIndex + 1];
+  if (!key) { console.log(`\n  ${c.red('✗')} Usage: openclaw-doctor --activate YOUR-LICENSE-KEY\n`); process.exit(1); }
+  console.log(`\n  ${c.cyan('⏳')}  Verifying license key...`);
+  const online = verifyLicenseOnline(key);
+  if (online.valid) {
+    await saveLicense(key);
+    console.log(`  ${c.green('✓')} ${c.bold('License activated!')} (${online.email})`);
+    console.log(`  ${c.dim('Saved to')} ${LICENSE_FILE}`);
+    console.log(`\n  ${c.magenta('⚡')} You can now use ${c.bold('openclaw-doctor --fix')} to auto-repair issues.\n`);
+  } else if (online.reason === 'offline') {
+    if (verifyLicenseOffline(key)) {
+      await saveLicense(key);
+      console.log(`  ${c.yellow('⚠')} Saved (offline — will verify next time you're online)`);
+      console.log(`\n  ${c.magenta('⚡')} You can now use ${c.bold('openclaw-doctor --fix')}\n`);
+    } else {
+      console.log(`  ${c.red('✗')} Invalid license key format.\n`);
+    }
+  } else {
+    console.log(`  ${c.red('✗')} Invalid license key: ${online.reason}`);
+    console.log(`  ${c.dim('Get yours at')} ${c.cyan(BUY_URL)}\n`);
+  }
+  process.exit(0);
+}
+
+async function handleDeactivate() {
+  const removed = await removeLicense();
+  if (removed) console.log(`\n  ${c.green('✓')} License removed.\n`);
+  else console.log(`\n  ${c.yellow('⚠')} No license found.\n`);
+  process.exit(0);
+}
+
+async function requireLicense() {
+  const key = await loadLicense();
+  if (!key) {
+    console.log(`\n  ${c.red('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')}`);
+    console.log(`  ${c.red('  ⚡ --fix requires a Pro license')}`);
+    console.log(`  ${c.red('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')}`);
+    console.log('');
+    console.log(`  ${c.bold('Get your license key:')} ${c.cyan(BUY_URL)}`);
+    console.log('');
+    console.log(`  Then activate:`);
+    console.log(`  ${c.yellow('openclaw-doctor --activate YOUR-LICENSE-KEY')}`);
+    console.log('');
+    console.log(`  ${c.dim('Free mode still shows all diagnostics + fix commands.')}`);
+    console.log(`  ${c.dim('Pro auto-repairs everything in one shot.')}\n`);
+    process.exit(0);
+  }
+  // Verify saved key
+  const online = verifyLicenseOnline(key);
+  if (online.valid) return true;
+  if (online.reason === 'offline') {
+    if (verifyLicenseOffline(key)) { console.log(`  ${c.yellow('⚠')}  License: offline mode (will verify when online)`); return true; }
+  }
+  console.log(`  ${c.red('✗')} License key expired or invalid. Re-activate or buy a new one.`);
+  console.log(`  ${c.cyan(BUY_URL)}\n`);
+  process.exit(1);
+}
+
+// ─── Checks ──────────────────────────────────────────────
 const checks = [];
 let fixCount = 0;
 
@@ -56,32 +158,20 @@ function report(status, category, message, fix = null) {
     console.log(`         ${c.dim('Fix:')} ${c.yellow(fix)}`);
 }
 
-function reportFixed(message) {
-  fixCount++;
-  report('fixed', 'autofix', message);
-}
+function reportFixed(message) { fixCount++; report('fixed', 'autofix', message); }
 
 function deepSet(obj, path, value) {
   const keys = path.split('.');
-  let current = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (!current[keys[i]]) current[keys[i]] = {};
-    current = current[keys[i]];
-  }
-  current[keys[keys.length - 1]] = value;
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) { if (!cur[keys[i]]) cur[keys[i]] = {}; cur = cur[keys[i]]; }
+  cur[keys[keys.length - 1]] = value;
 }
 
 async function backupConfig() {
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupPath = CONFIG_PATH.replace('.json', `.backup-${ts}.json`);
-  try {
-    await copyFile(CONFIG_PATH, backupPath);
-    console.log(`  ${c.cyan('📦')}  Config backed up to ${c.dim(backupPath)}`);
-    return backupPath;
-  } catch {
-    console.log(`  ${c.red('⚠')}  Could not backup config`);
-    return null;
-  }
+  const bp = CONFIG_PATH.replace('.json', `.backup-${ts}.json`);
+  try { await copyFile(CONFIG_PATH, bp); console.log(`  ${c.cyan('📦')}  Config backed up to ${c.dim(bp)}`); }
+  catch { console.log(`  ${c.red('⚠')}  Could not backup config`); }
 }
 
 async function checkConfig() {
@@ -227,26 +317,45 @@ function generateHTML() {
   const icon = (s) => s === 'pass' ? '✓' : s === 'fail' ? '✗' : s === 'warn' ? '⚠' : s === 'fixed' ? '🔧' : 'ℹ';
   const color = (s) => s === 'pass' ? '#00ff88' : s === 'fail' ? '#ff4444' : s === 'warn' ? '#ffaa00' : s === 'fixed' ? '#cc44ff' : '#00ccff';
   const rows = checks.map(ch => `<div class="ck ${ch.status}"><span class="ic" style="color:${color(ch.status)}">${icon(ch.status)}</span><span class="cat">${ch.category}</span><span class="msg">${ch.message}</span>${ch.fix && ch.status !== 'pass' && ch.status !== 'fixed' ? `<div class="fix">Fix: <code>${ch.fix}</code></div>` : ''}</div>`).join('\n');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenClaw Doctor Pro</title><style>@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Orbitron:wght@700;900&display=swap');*{margin:0;padding:0;box-sizing:border-box}body{font-family:'JetBrains Mono',monospace;background:#0a0a0f;color:#c8c8d0;min-height:100vh;padding:2rem}.ctr{max-width:900px;margin:0 auto}h1{font-family:'Orbitron',sans-serif;font-size:2rem;color:#00ccff;text-shadow:0 0 30px rgba(0,204,255,0.3);margin-bottom:.5rem}.sub{color:#666;margin-bottom:2rem}.sb{background:#1a1a2e;border:1px solid #2a2a3e;border-radius:12px;padding:1.5rem 2rem;margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center}.sn{font-family:'Orbitron',sans-serif;font-size:3rem;font-weight:900;color:${score>=80?'#00ff88':score>=50?'#ffaa00':'#ff4444'}}.sl{color:#666;font-size:.85rem}.sts{display:flex;gap:2rem}.st{text-align:center}.st-n{font-size:1.5rem;font-weight:700}.st-l{font-size:.75rem;color:#666}.ck{padding:.8rem 1rem;border-left:3px solid transparent;margin-bottom:2px;background:#12121e;display:grid;grid-template-columns:2rem 5rem 1fr;align-items:start;gap:.5rem}.ck.fail{border-left-color:#ff4444;background:#1a1015}.ck.warn{border-left-color:#ffaa00;background:#1a1810}.ck.pass{border-left-color:#00ff88}.ck.fixed{border-left-color:#cc44ff;background:#1a1020}.ic{font-size:1.1rem;text-align:center}.cat{color:#666;font-size:.8rem;text-transform:uppercase}.msg{color:#ddd}.fix{grid-column:3;color:#888;font-size:.8rem;margin-top:.3rem}.fix code{background:#1a1a2e;color:#ffaa00;padding:.15rem .4rem;border-radius:3px;font-size:.75rem}</style></head><body><div class="ctr"><h1>🦞 OpenClaw Doctor Pro</h1><div class="sub">Health Report — ${now}${fixed > 0 ? ` — ${fixed} issues auto-fixed!` : ''}</div><div class="sb"><div><div class="sn">${score}%</div><div class="sl">HEALTH SCORE</div></div><div class="sts"><div class="st"><div class="st-n" style="color:#00ff88">${pass}</div><div class="st-l">PASSED</div></div><div class="st"><div class="st-n" style="color:#ff4444">${fail}</div><div class="st-l">FAILED</div></div><div class="st"><div class="st-n" style="color:#ffaa00">${warn}</div><div class="st-l">WARNINGS</div></div>${fixed > 0 ? `<div class="st"><div class="st-n" style="color:#cc44ff">${fixed}</div><div class="st-l">FIXED</div></div>` : ''}</div></div>${rows}<div style="margin-top:2rem;text-align:center;color:#333;font-size:.75rem">Generated by OpenClaw Doctor Pro v2.0.0</div></div></body></html>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenClaw Doctor Pro</title><style>@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Orbitron:wght@700;900&display=swap');*{margin:0;padding:0;box-sizing:border-box}body{font-family:'JetBrains Mono',monospace;background:#0a0a0f;color:#c8c8d0;min-height:100vh;padding:2rem}.ctr{max-width:900px;margin:0 auto}h1{font-family:'Orbitron',sans-serif;font-size:2rem;color:#00ccff;text-shadow:0 0 30px rgba(0,204,255,0.3);margin-bottom:.5rem}.sub{color:#666;margin-bottom:2rem}.sb{background:#1a1a2e;border:1px solid #2a2a3e;border-radius:12px;padding:1.5rem 2rem;margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center}.sn{font-family:'Orbitron',sans-serif;font-size:3rem;font-weight:900;color:${score>=80?'#00ff88':score>=50?'#ffaa00':'#ff4444'}}.sl{color:#666;font-size:.85rem}.sts{display:flex;gap:2rem}.st{text-align:center}.st-n{font-size:1.5rem;font-weight:700}.st-l{font-size:.75rem;color:#666}.ck{padding:.8rem 1rem;border-left:3px solid transparent;margin-bottom:2px;background:#12121e;display:grid;grid-template-columns:2rem 5rem 1fr;align-items:start;gap:.5rem}.ck.fail{border-left-color:#ff4444;background:#1a1015}.ck.warn{border-left-color:#ffaa00;background:#1a1810}.ck.pass{border-left-color:#00ff88}.ck.fixed{border-left-color:#cc44ff;background:#1a1020}.ic{font-size:1.1rem;text-align:center}.cat{color:#666;font-size:.8rem;text-transform:uppercase}.msg{color:#ddd}.fix{grid-column:3;color:#888;font-size:.8rem;margin-top:.3rem}.fix code{background:#1a1a2e;color:#ffaa00;padding:.15rem .4rem;border-radius:3px;font-size:.75rem}</style></head><body><div class="ctr"><h1>🦞 OpenClaw Doctor Pro</h1><div class="sub">Health Report — ${now}${fixed > 0 ? ` — ${fixed} issues auto-fixed!` : ''}</div><div class="sb"><div><div class="sn">${score}%</div><div class="sl">HEALTH SCORE</div></div><div class="sts"><div class="st"><div class="st-n" style="color:#00ff88">${pass}</div><div class="st-l">PASSED</div></div><div class="st"><div class="st-n" style="color:#ff4444">${fail}</div><div class="st-l">FAILED</div></div><div class="st"><div class="st-n" style="color:#ffaa00">${warn}</div><div class="st-l">WARNINGS</div></div>${fixed > 0 ? `<div class="st"><div class="st-n" style="color:#cc44ff">${fixed}</div><div class="st-l">FIXED</div></div>` : ''}</div></div>${rows}<div style="margin-top:2rem;text-align:center;color:#333;font-size:.75rem">Generated by OpenClaw Doctor Pro v2.1.0</div></div></body></html>`;
 }
 
 async function main() {
-  console.log(c.bold('\n🦞 OpenClaw Doctor Pro v2.0.0'));
-  if (FIX_MODE) { console.log(c.magenta('⚡ AUTO-FIX MODE — will repair issues automatically\n')); await backupConfig(); }
-  else { console.log(c.dim('Deep diagnostics for OpenClaw installations')); console.log(c.dim('Run with --fix to auto-repair issues\n')); }
+  if (ACTIVATE) { await handleActivate(); return; }
+  if (DEACTIVATE) { await handleDeactivate(); return; }
+
+  console.log(c.bold('\n🦞 OpenClaw Doctor Pro v2.1.0'));
+
+  if (FIX_MODE) {
+    await requireLicense();
+    console.log(c.magenta('⚡ AUTO-FIX MODE — will repair issues automatically\n'));
+    await backupConfig();
+  } else {
+    console.log(c.dim('Deep diagnostics for OpenClaw installations'));
+    console.log(c.dim('Run with --fix to auto-repair issues (Pro license required)\n'));
+  }
+
   const config = await checkConfig();
   await checkOllama(); await checkGPU(); await checkGateway(); await checkTelegram(config); await checkDocker(config); await checkEnv();
+
   const pass = checks.filter(c => c.status === 'pass').length;
   const fail = checks.filter(c => c.status === 'fail').length;
   const warn = checks.filter(c => c.status === 'warn').length;
   const fixed = checks.filter(c => c.status === 'fixed').length;
   const total = checks.filter(c => ['pass','fail','warn','fixed'].includes(c.status)).length;
   const score = Math.round(((pass + fixed) / Math.max(total, 1)) * 100);
+
   console.log(`\n${c.bold('━━━ Summary ━━━')}`);
   console.log(`  Score: ${score >= 80 ? c.green(score + '%') : score >= 50 ? c.yellow(score + '%') : c.red(score + '%')}`);
   console.log(`  ${c.green(pass + ' passed')}  ${c.red(fail + ' failed')}  ${c.yellow(warn + ' warnings')}${fixed > 0 ? '  ' + c.magenta(fixed + ' fixed') : ''}`);
+
   if (FIX_MODE && fixCount > 0) console.log(`\n  ${c.magenta('⚡')} ${c.bold(`Auto-fixed ${fixCount} issues!`)} Run again without --fix to verify.`);
-  else if (!FIX_MODE && fail > 0) console.log(`\n  ${c.yellow('💡')} Run ${c.bold('openclaw-doctor --fix')} to auto-repair ${fail} issue${fail > 1 ? 's' : ''}`);
+  else if (!FIX_MODE && fail > 0) {
+    console.log(`\n  ${c.yellow('💡')} Run ${c.bold('openclaw-doctor --fix')} to auto-repair ${fail} issue${fail > 1 ? 's' : ''}`);
+    const lic = await loadLicense();
+    if (!lic) console.log(`  ${c.dim('Pro license required.')} ${c.cyan(BUY_URL)}`);
+  }
+
   if (args.includes('--json')) console.log('\n' + JSON.stringify({ timestamp: new Date().toISOString(), score, fixCount, checks }, null, 2));
   if (args.includes('--html') || args.includes('--publish')) {
     const html = generateHTML(); const out = join(process.cwd(), 'doctor-report.html'); await writeFile(out, html); console.log(`\n  ${INFO}  Report: ${out}`);
