@@ -31,11 +31,11 @@ const FIX_MODE = args.includes('--fix');
 const ACTIVATE = args.includes('--activate');
 const DEACTIVATE = args.includes('--deactivate');
 
-const LICENSE_DIR = join(homedir(), '.openclaw-doctor-pro');
+const LICENSE_DIR = join(homedir(), '.ZEYWMDU6neFa7m93j7fY6g==');
 const LICENSE_FILE = join(LICENSE_DIR, 'license.key');
 const CONFIG_PATH = join(homedir(), '.openclaw', 'openclaw.json');
-const GUMROAD_PRODUCT = 'openclaw-doctor-pro';
-const BUY_URL = 'https://metadataking.gumroad.com/l/openclaw-doctor-pro';
+const GUMROAD_PRODUCT = 'ZEYWMDU6neFa7m93j7fY6g==';
+const BUY_URL = 'https://metadataking.gumroad.com/l/ZEYWMDU6neFa7m93j7fY6g==';
 
 function run(cmd) {
   try { return execSync(cmd, { encoding: 'utf8', timeout: 15000 }).trim(); }
